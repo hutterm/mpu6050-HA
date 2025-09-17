@@ -38,6 +38,8 @@ freq_s = (freq_divider + 1) / 1000.0 # sample frequency in seconds
 
 accel_range = 2.0
 
+switch_entity_id = "switch.mpu6050_enabled"
+
 class MPU6050AngleSensor(SensorEntity):
     def __init__(self, name, sensor_type):
         self._name = name
@@ -78,11 +80,11 @@ class MPU6050SensorManager:
 
         # Registrieren des Listeners für den Switch-Zustand
         async_track_state_change_event(
-            self.hass, "switch.mpu6050_enabled", self.switch_listener
+            self.hass, switch_entity_id, self.switch_listener
         )
 
         _LOGGER.info("MPU6050SensorManager initialisiert.")
-        switch_state = hass.states.get("switch.mpu6050_enabled")
+        switch_state = hass.states.get(switch_entity_id)
         if switch_state and switch_state.state == "on":
             self.start()
 
@@ -139,7 +141,7 @@ class MPU6050SensorManager:
             # angle_x, angle_y = 0.0, 0.0
 
             while not self._stop_event.is_set():
-                switch_state = self.hass.states.get("switch.schalte_ausrichtung_ein")
+                switch_state = self.hass.states.get(switch_entity_id)
                 if switch_state is None or switch_state.state == "off":
                     _LOGGER.info("Schalter ist aus; Sensor-Updates sind pausiert.")
                     self._stop_event.wait(5)
