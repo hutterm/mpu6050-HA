@@ -11,7 +11,7 @@ from homeassistant.components.sensor import SensorEntity
 from smbus2 import SMBus
 from homeassistant.helpers.event import async_track_state_change_event
 from .MPU6050 import MPU6050
-import MPUConstants
+from .MPUConstants import MPUConstants
 
 
 from scipy.spatial.transform import Rotation as R
