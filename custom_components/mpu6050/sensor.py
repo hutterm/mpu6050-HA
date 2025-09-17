@@ -131,7 +131,7 @@ class MPU6050SensorManager:
 
             except Exception as e:
                 _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
-                return
+                continue
             
             # packet_size = mpu.DMP_get_FIFO_packet_size()
             # FIFO_buffer = [0]*64
@@ -141,12 +141,6 @@ class MPU6050SensorManager:
             # angle_x, angle_y = 0.0, 0.0
 
             while not self._stop_event.is_set():
-                switch_state = self.hass.states.get(switch_entity_id)
-                if switch_state is None or switch_state.state == "off":
-                    _LOGGER.info("Schalter ist aus; Sensor-Updates sind pausiert.")
-                    self._stop_event.wait(5)
-                    continue
-
                 start_time = time.time()
                 target_ct = (int)(self.target_interval / freq_s)
                 try:
