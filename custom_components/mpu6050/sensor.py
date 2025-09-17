@@ -152,9 +152,9 @@ class MPU6050SensorManager:
                     for i in range(0,target_ct):
                         time.sleep(max(0, i*freq_s - (time.time() - start_time)))
                         accel = mpu.get_acceleration()
-                        Ax = accel.x * 2*g / 2**15 * accel_range
-                        Ay = accel.y * 2*g / 2**15 * accel_range
-                        Az = accel.z * 2*g / 2**15 * accel_range
+                        Ax = accel.x * accel_range*g / 2**15
+                        Ay = accel.y * accel_range*g / 2**15
+                        Az = accel.z * accel_range*g / 2**15
                         ax_sum += Ax
                         ay_sum += Ay
                         az_sum += Az
@@ -177,9 +177,9 @@ class MPU6050SensorManager:
 
                     #         # DMP acceleration (less noisy acceleration - based on fusion)
                     #         accel_dmp = mpu.DMP_get_acceleration_int16(FIFO_buffer)
-                    #         Ax_dmp = accel_dmp.x * 2*g / 2**15 * accel_range
-                    #         Ay_dmp = accel_dmp.y * 2*g / 2**15 * accel_range
-                    #         Az_dmp = accel_dmp.z * 2*g / 2**15 * accel_range
+                    #         Ax_dmp = accel_dmp.x * accel_range*g / 2**15
+                    #         Ay_dmp = accel_dmp.y * accel_range*g / 2**15
+                    #         Az_dmp = accel_dmp.z * accel_range*g / 2**15
 
                     #         # # raw gyro (full range: [-250, +250]) (unit: degree / second)
                     #         # gyro = mpu.get_rotation()
