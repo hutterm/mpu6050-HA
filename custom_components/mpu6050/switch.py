@@ -7,7 +7,7 @@ _LOGGER = logging.getLogger(__name__)
 class CustomSwitch(SwitchEntity):
     def __init__(self, name, manager):
         self._name = name
-        self._is_on = False
+        self._is_on = True
         self._manager = manager
 
     @property
