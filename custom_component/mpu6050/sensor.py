@@ -18,6 +18,7 @@ MPU6050_ADDR = 0x69
 MPU6050_PWR_MGMT_1 = 0x6B
 MPU6050_ACCEL_XOUT_H = 0x3B
 MPU6050_ACCEL_YOUT_H = 0x3D
+MPU6050_ACCEL_ZOUT_H = 0x3F
 MPU6050_GYRO_XOUT_H = 0x43
 MPU6050_GYRO_YOUT_H = 0x45
 
@@ -160,7 +161,7 @@ class MPU6050SensorManager:
             _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
             return
 
-        angle_x, angle_y = 0.0, 0.0
+        # angle_x, angle_y = 0.0, 0.0
 
         while not self._stop_event.is_set():
             switch_state = self.hass.states.get("switch.schalte_ausrichtung_ein")
@@ -171,26 +172,49 @@ class MPU6050SensorManager:
 
             start_time = time.time()
             try:
-                accel_x = read_raw_data(MPU6050_ACCEL_XOUT_H) - self.x_offset
-                accel_y = read_raw_data(MPU6050_ACCEL_YOUT_H) - self.y_offset
-                #accel_z = read_raw_data(MPU6050_ACCEL_XOUT_H + 2)
-
-                #gyro_x = read_raw_data(MPU6050_GYRO_XOUT_H) - self.x_offset
-                #gyro_y = read_raw_data(MPU6050_GYRO_YOUT_H) - self.y_offset
-
-                #accel_angle_x = math.atan2(accel_y, math.sqrt(accel_x**2 + accel_z**2)) * (180 / math.pi)
-                #accel_angle_y = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * (180 / math.pi)
-
-                #dt = time.time() - start_time
-                angle_x = math.atan(accel_x / 16384.0) * (180 / math.pi)
-                angle_y = math.atan(accel_y / 16384.0) * (180 / math.pi)
+                accel_x = 0
+                accel_y = 0
+                accel_z = 0
 
 
-                for sensor in self.sensors:
-                    if sensor._sensor_type == "x_angle":
-                        sensor.update_state(angle_x)
-                    elif sensor._sensor_type == "y_angle":
-                        sensor.update_state(angle_y)
+
+                # repeat readings 10 times and average them
+
+                for _ in range(10):
+                    accel_x += read_raw_data(MPU6050_ACCEL_XOUT_H)
+                    accel_y += read_raw_data(MPU6050_ACCEL_YOUT_H)
+                    accel_z += read_raw_data(MPU6050_ACCEL_ZOUT_H)
+                accel_x /= 10
+                accel_y /= 10
+                accel_z /= 10
+
+                # normalize Vector
+                norm = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+                if norm != 0:
+                    accel_x /= norm
+                    accel_y /= norm
+                    accel_z /= norm
+                
+                self.sensors[0].update_state(accel_x)
+                self.sensors[1].update_state(accel_y)
+                self.sensors[2].update_state(accel_z)
+
+                # #gyro_x = read_raw_data(MPU6050_GYRO_XOUT_H) - self.x_offset
+                # #gyro_y = read_raw_data(MPU6050_GYRO_YOUT_H) - self.y_offset
+
+                # #accel_angle_x = math.atan2(accel_y, math.sqrt(accel_x**2 + accel_z**2)) * (180 / math.pi)
+                # #accel_angle_y = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * (180 / math.pi)
+
+                # #dt = time.time() - start_time
+                # angle_x = math.atan(accel_x / 16384.0) * (180 / math.pi)
+                # angle_y = math.atan(accel_y / 16384.0) * (180 / math.pi)
+
+
+                # for sensor in self.sensors:
+                #     if sensor._sensor_type == "x_angle":
+                #         sensor.update_state(angle_x)
+                #     elif sensor._sensor_type == "y_angle":
+                #         sensor.update_state(angle_y)
 
                 time.sleep(max(0, self.target_interval - (time.time() - start_time)))
             except Exception as e:
@@ -212,8 +236,9 @@ def read_raw_data(addr):
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     sensors = [
-        MPU6050AngleSensor("MPU6050 X Winkel", "x_angle"),
-        MPU6050AngleSensor("MPU6050 Y Winkel", "y_angle")
+        MPU6050AngleSensor("MPU6050 X", "x"),
+        MPU6050AngleSensor("MPU6050 Y", "y"),
+        MPU6050AngleSensor("MPU6050 Z", "z")
     ]
 
     manager = MPU6050SensorManager(hass, sensors, target_interval=5)
