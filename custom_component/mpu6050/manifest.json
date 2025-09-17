@@ -1,12 +1,12 @@
 {
-    "domain": "mpu650",
+    "domain": "mpu6050",
     "name": "MPU6050 Sensor",
-    "codeowners": ["@maxlin1"],
+    "codeowners": ["@huetterm"],
     "config_flow": false,
     "dependencies": [],
-    "documentation": "https://github.com/maxlin1/homeassistant_PekawayVANPICORE",
+    "documentation": "https://github.com/hutterm/mpu6050-HA",
     "integration_type": "hub",
     "iot_class": "local_polling",
-    "requirements": ["smbus2", "mpu6050-raspberrypi==1.1"],  
-    "version": "1.0"
+    "requirements": ["smbus2", "quat"],  
+    "version": "1.1"
 }
