@@ -41,7 +41,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     for attempt in range(5):
         manager = hass.data.get("mpu6050_sensor_manager")
         if manager:
-            custom_switch = CustomSwitch("Schalte Ausrichtung Ein", manager)
+            custom_switch = CustomSwitch("MPU6050 enabled", manager)
             async_add_entities([custom_switch])
             _LOGGER.info("MPU6050 Custom Switch erfolgreich hinzugefügt.")
             return

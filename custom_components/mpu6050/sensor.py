@@ -78,11 +78,11 @@ class MPU6050SensorManager:
 
         # Registrieren des Listeners für den Switch-Zustand
         async_track_state_change_event(
-            self.hass, "switch.schalte_ausrichtung_ein", self.switch_listener
+            self.hass, "switch.mpu6050_enabled", self.switch_listener
         )
 
         _LOGGER.info("MPU6050SensorManager initialisiert.")
-        switch_state = hass.states.get("switch.schalte_ausrichtung_ein")
+        switch_state = hass.states.get("switch.mpu6050_enabled")
         if switch_state and switch_state.state == "on":
             self.start()
 
