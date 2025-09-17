@@ -11,6 +11,7 @@ from homeassistant.components.sensor import SensorEntity
 from smbus2 import SMBus
 from homeassistant.helpers.event import async_track_state_change_event
 from .MPU6050 import MPU6050
+import MPUConstants
 
 
 from scipy.spatial.transform import Rotation as R
@@ -28,12 +29,14 @@ MPU6050_ACCEL_ZOUT_H = 0x3F
 MPU6050_GYRO_XOUT_H = 0x43
 MPU6050_GYRO_YOUT_H = 0x45
 
-CALIBRATION_FILE = os.path.join(os.path.dirname(__file__), "mpu6050_calibration.json")
 # bus = SMBus(1)
 
 i2c_bus = 1
-device_address = 0x69
-freq_divider = 0xC7
+device_address = MPUConstants.MPU6050_ADDRESS_AD0_HIGH # 0x69
+freq_divider = 0xC7 # 1kHz/(199+1) = 5Hz
+freq_s = (freq_divider + 1) / 1000.0 # sample frequency in seconds
+
+accel_range = 2.0
 
 class MPU6050AngleSensor(SensorEntity):
     def __init__(self, name, sensor_type):
@@ -62,7 +65,7 @@ class MPU6050AngleSensor(SensorEntity):
         self.hass.add_job(self.async_write_ha_state)
 
 class MPU6050SensorManager:
-    def __init__(self, hass, sensors, target_interval=5):
+    def __init__(self, hass, sensors, target_interval=1):
         self.hass = hass
         self.sensors = sensors
         self._stop_event = threading.Event()
@@ -72,9 +75,6 @@ class MPU6050SensorManager:
         self.accel_x_window = deque(maxlen=20)
         self.accel_y_window = deque(maxlen=20)
 
-        # Kalibrierungsdaten asynchron laden
-        loop = asyncio.get_running_loop()
-        loop.create_task(self.load_calibration_async())
 
         # Registrieren des Listeners für den Switch-Zustand
         async_track_state_change_event(
@@ -85,23 +85,6 @@ class MPU6050SensorManager:
         switch_state = hass.states.get("switch.schalte_ausrichtung_ein")
         if switch_state and switch_state.state == "on":
             self.start()
-
-    async def load_calibration_async(self):
-        def load_calibration():
-            if os.path.exists(CALIBRATION_FILE):
-                try:
-                    with open(CALIBRATION_FILE, "r") as file:
-                        calibration_data = json.load(file)
-                        return calibration_data.get("x_offset", 0.0), calibration_data.get("y_offset", 0.0)
-                except Exception as e:
-                    _LOGGER.error(f"Fehler beim Laden der Kalibrierungsdaten: {e}")
-            _LOGGER.info("Keine gespeicherten Kalibrierungsdaten gefunden. Standardwerte werden verwendet.")
-            return 0.0, 0.0
-
-        loop = asyncio.get_running_loop()
-        x_offset, y_offset = await loop.run_in_executor(None, load_calibration)
-        self.x_offset, self.y_offset = x_offset, y_offset
-        _LOGGER.info("Kalibrierungsdaten erfolgreich geladen.")
 
     def switch_listener(self, event):
         new_state = event.data.get("new_state")
@@ -127,167 +110,152 @@ class MPU6050SensorManager:
             self._thread = None
             _LOGGER.info("MPU6050SensorManager gestoppt.")
 
-    def save_calibration(self, x_offset, y_offset):
-        calibration_data = {
-            "x_offset": x_offset,
-            "y_offset": y_offset
-        }
-        try:
-            with open(CALIBRATION_FILE, "w") as file:
-                json.dump(calibration_data, file)
-            _LOGGER.info("Kalibrierungsdaten erfolgreich gespeichert.")
-        except Exception as e:
-            _LOGGER.error(f"Fehler beim Speichern der Kalibrierungsdaten: {e}")
-
-    def calibrate(self):
-        try:
-            _LOGGER.info("Kalibrierung wird gestartet...")
-            accel_x_offset = 0
-            accel_y_offset = 0
-            num_samples = 300
-
-            for _ in range(num_samples):
-                accel_x_offset += read_raw_data(MPU6050_ACCEL_XOUT_H)
-                accel_y_offset += read_raw_data(MPU6050_ACCEL_YOUT_H)
-                time.sleep(0.01)
-
-            accel_x_offset /= num_samples
-            accel_y_offset /= num_samples
-
-            self.save_calibration(accel_x_offset, accel_y_offset)
-
-            # Korrekte Zuweisung der Offsets
-            self.x_offset = accel_x_offset
-            self.y_offset = accel_y_offset
-
-            _LOGGER.info("Kalibrierung abgeschlossen. Offsets gespeichert.")
-        except Exception as e:
-            _LOGGER.error(f"Fehler bei der Kalibrierung: {e}")
-
     def read_sensor_data(self):
 
-
-        mpu=None
-        try:
-            # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
-
-            
-            # Make an MPU6050
-            mpu = MPU6050(i2c_bus, device_address, freq_divider,a_xGOff=57,a_yGOff=24,a_zGOff=149)
-
-            # Initiate your DMP
-            mpu.dmp_initialize()
-            mpu.set_DMP_enabled(True)
-
-        except Exception as e:
-            _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
-            return
         
-        packet_size = mpu.DMP_get_FIFO_packet_size()
-        FIFO_buffer = [0]*64
-
-        g = 9.82 # gravity acceleration (m/s^2)
-        # r = R.from_euler('y', -90, degrees=True)
-        # angle_x, angle_y = 0.0, 0.0
-
         while not self._stop_event.is_set():
-            switch_state = self.hass.states.get("switch.schalte_ausrichtung_ein")
-            if switch_state is None or switch_state.state == "off":
-                _LOGGER.info("Schalter ist aus; Sensor-Updates sind pausiert.")
-                self._stop_event.wait(5)
-                continue
 
-            start_time = time.time()
+            mpu=None
             try:
-                for i in range(0,20): # infinite loop
-                    if mpu.isreadyFIFO(packet_size): # Check if FIFO data are ready to use...
-                        
-                        FIFO_buffer = mpu.get_FIFO_bytes(packet_size) # get all the DMP data here
-                        
-                        # # raw acceleration
-                        # accel = mpu.get_acceleration()
-                        # Ax = accel.x * 2*g / 2**15
-                        # Ay = accel.y * 2*g / 2**15
-                        # Az = accel.z * 2*g / 2**15
+                # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
 
-                        # DMP acceleration (less noisy acceleration - based on fusion)
-                        accel_dmp = mpu.DMP_get_acceleration_int16(FIFO_buffer)
-                        Ax_dmp = accel_dmp.x * 2*g / 2**15 * 2
-                        Ay_dmp = accel_dmp.y * 2*g / 2**15 * 2
-                        Az_dmp = accel_dmp.z * 2*g / 2**15 * 2
-
-                        # # raw gyro (full range: [-250, +250]) (unit: degree / second)
-                        # gyro = mpu.get_rotation()
-                        # Gx = gyro.x * 250 / 2**15
-                        # Gy = gyro.y * 250 / 2**15
-                        # Gz = gyro.z * 250 / 2**15
-                        
-                        # a_quat = mpu.DMP_get_quaternion_int16(FIFO_buffer)
-                        # quat = R.from_quat((a_quat.x,a_quat.y,a_quat.z,a_quat.w))
-                        # quat = r * quat
-                        # rpy = quat.as_euler('zyx', True)
-                        
-                        # yaw   = rpy[0]
-                        # pitch = rpy[1]
-                        # roll  = rpy[2]
-                        # # grav = mpu.DMP_get_gravity(q)
-                        # roll_pitch_yaw = mpu.DMP_get_euler_roll_pitch_yaw(q)
-                        self.sensors[0].update_state(Ax_dmp)
-                        self.sensors[1].update_state(Ay_dmp)
-                        self.sensors[2].update_state(Az_dmp)
-                        self.sensors[3].update_state(mpu.get_temp())
-                        # print(f'Ax:  {Ax:7.2f}, Ay:  {Ay:7.2f}, Az:  {Az:7.2f}')
-                        _LOGGER.debug(f'AxD: {Ax_dmp:7.2f}, AyD: {Ay_dmp:7.2f}, AzD: {Az_dmp:7.2f}')
-                        # _LOGGER.debug(f"Orientation → Roll: {roll:.2f}°, Pitch: {pitch:.2f}°, Yaw: {yaw:.2f}°")
-                        _LOGGER.debug(f'temp: {mpu.get_temp()}' )
-                        
-                        break
-                    time.sleep(0.01)
-                # accel_x = 0
-                # accel_y = 0
-                # accel_z = 0
-                # # repeat readings 10 times and average them
-
-                # for _ in range(10):
-                #     accel_x += read_raw_data(MPU6050_ACCEL_XOUT_H)
-                #     accel_y += read_raw_data(MPU6050_ACCEL_YOUT_H)
-                #     accel_z += read_raw_data(MPU6050_ACCEL_ZOUT_H)
-                # accel_x /= 10
-                # accel_y /= 10
-                # accel_z /= 10
-
-                # # normalize Vector
-                # norm = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
-                # if norm != 0:
-                #     accel_x /= norm
-                #     accel_y /= norm
-                #     accel_z /= norm
                 
-                # self.sensors[0].update_state(accel_x)
-                # self.sensors[1].update_state(accel_y)
-                # self.sensors[2].update_state(accel_z)
+                # Make an MPU6050
+                mpu = MPU6050(i2c_bus, device_address, freq_divider,a_xGOff=57,a_yGOff=24,a_zGOff=149)
 
-                # #gyro_x = read_raw_data(MPU6050_GYRO_XOUT_H) - self.x_offset
-                # #gyro_y = read_raw_data(MPU6050_GYRO_YOUT_H) - self.y_offset
+                # # Initiate your DMP
+                # mpu.dmp_initialize()
+                # mpu.set_DMP_enabled(True)
 
-                # #accel_angle_x = math.atan2(accel_y, math.sqrt(accel_x**2 + accel_z**2)) * (180 / math.pi)
-                # #accel_angle_y = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * (180 / math.pi)
-
-                # #dt = time.time() - start_time
-                # angle_x = math.atan(accel_x / 16384.0) * (180 / math.pi)
-                # angle_y = math.atan(accel_y / 16384.0) * (180 / math.pi)
-
-
-                # for sensor in self.sensors:
-                #     if sensor._sensor_type == "x_angle":
-                #         sensor.update_state(angle_x)
-                #     elif sensor._sensor_type == "y_angle":
-                #         sensor.update_state(angle_y)
-
-                time.sleep(max(0, self.target_interval - (time.time() - start_time)))
             except Exception as e:
-                _LOGGER.error(f"Fehler beim Lesen der Sensordaten: {e}",stack_info=True, exc_info=True)
-                break
+                _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
+                return
+            
+            # packet_size = mpu.DMP_get_FIFO_packet_size()
+            # FIFO_buffer = [0]*64
+
+            g = 9.82 # gravity acceleration (m/s^2)
+            # r = R.from_euler('y', -90, degrees=True)
+            # angle_x, angle_y = 0.0, 0.0
+
+            while not self._stop_event.is_set():
+                switch_state = self.hass.states.get("switch.schalte_ausrichtung_ein")
+                if switch_state is None or switch_state.state == "off":
+                    _LOGGER.info("Schalter ist aus; Sensor-Updates sind pausiert.")
+                    self._stop_event.wait(5)
+                    continue
+
+                start_time = time.time()
+                target_ct = (int)(self.target_interval / freq_s)
+                try:
+                    # 5hz frequency
+                    ax_sum = 0.0
+                    ay_sum = 0.0
+                    az_sum = 0.0
+                    #ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                    for i in range(0,target_ct):
+                        time.sleep(max(0, i*freq_s - (time.time() - start_time)))
+                        accel = mpu.get_acceleration()
+                        Ax = accel.x * 2*g / 2**15 * accel_range
+                        Ay = accel.y * 2*g / 2**15 * accel_range
+                        Az = accel.z * 2*g / 2**15 * accel_range
+                        ax_sum += Ax
+                        ay_sum += Ay
+                        az_sum += Az
+
+                    self.sensors[0].update_state(ax_sum / target_ct)
+                    self.sensors[1].update_state(ay_sum / target_ct)
+                    self.sensors[2].update_state(az_sum / target_ct)
+                    self.sensors[3].update_state(mpu.get_temp())
+
+                    # for i in range(0,20): # infinite loop
+                    #     if mpu.isreadyFIFO(packet_size): # Check if FIFO data are ready to use...
+                            
+                    #         FIFO_buffer = mpu.get_FIFO_bytes(packet_size) # get all the DMP data here
+                            
+                    #         # # raw acceleration
+                    #         # accel = mpu.get_acceleration()
+                    #         # Ax = accel.x * 2*g / 2**15
+                    #         # Ay = accel.y * 2*g / 2**15
+                    #         # Az = accel.z * 2*g / 2**15
+
+                    #         # DMP acceleration (less noisy acceleration - based on fusion)
+                    #         accel_dmp = mpu.DMP_get_acceleration_int16(FIFO_buffer)
+                    #         Ax_dmp = accel_dmp.x * 2*g / 2**15 * accel_range
+                    #         Ay_dmp = accel_dmp.y * 2*g / 2**15 * accel_range
+                    #         Az_dmp = accel_dmp.z * 2*g / 2**15 * accel_range
+
+                    #         # # raw gyro (full range: [-250, +250]) (unit: degree / second)
+                    #         # gyro = mpu.get_rotation()
+                    #         # Gx = gyro.x * 250 / 2**15
+                    #         # Gy = gyro.y * 250 / 2**15
+                    #         # Gz = gyro.z * 250 / 2**15
+                            
+                    #         # a_quat = mpu.DMP_get_quaternion_int16(FIFO_buffer)
+                    #         # quat = R.from_quat((a_quat.x,a_quat.y,a_quat.z,a_quat.w))
+                    #         # quat = r * quat
+                    #         # rpy = quat.as_euler('zyx', True)
+                            
+                    #         # yaw   = rpy[0]
+                    #         # pitch = rpy[1]
+                    #         # roll  = rpy[2]
+                    #         # # grav = mpu.DMP_get_gravity(q)
+                    #         # roll_pitch_yaw = mpu.DMP_get_euler_roll_pitch_yaw(q)
+                    #         self.sensors[0].update_state(Ax_dmp)
+                    #         self.sensors[1].update_state(Ay_dmp)
+                    #         self.sensors[2].update_state(Az_dmp)
+                    #         self.sensors[3].update_state(mpu.get_temp())
+                    #         # print(f'Ax:  {Ax:7.2f}, Ay:  {Ay:7.2f}, Az:  {Az:7.2f}')
+                    #         _LOGGER.debug(f'AxD: {Ax_dmp:7.2f}, AyD: {Ay_dmp:7.2f}, AzD: {Az_dmp:7.2f}')
+                    #         # _LOGGER.debug(f"Orientation → Roll: {roll:.2f}°, Pitch: {pitch:.2f}°, Yaw: {yaw:.2f}°")
+                    #         _LOGGER.debug(f'temp: {mpu.get_temp()}' )
+                            
+                    #         break
+                    # accel_x = 0
+                    # accel_y = 0
+                    # accel_z = 0
+                    # # repeat readings 10 times and average them
+
+                    # for _ in range(10):
+                    #     accel_x += read_raw_data(MPU6050_ACCEL_XOUT_H)
+                    #     accel_y += read_raw_data(MPU6050_ACCEL_YOUT_H)
+                    #     accel_z += read_raw_data(MPU6050_ACCEL_ZOUT_H)
+                    # accel_x /= 10
+                    # accel_y /= 10
+                    # accel_z /= 10
+
+                    # # normalize Vector
+                    # norm = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+                    # if norm != 0:
+                    #     accel_x /= norm
+                    #     accel_y /= norm
+                    #     accel_z /= norm
+                    
+                    # self.sensors[0].update_state(accel_x)
+                    # self.sensors[1].update_state(accel_y)
+                    # self.sensors[2].update_state(accel_z)
+
+                    # #gyro_x = read_raw_data(MPU6050_GYRO_XOUT_H) - self.x_offset
+                    # #gyro_y = read_raw_data(MPU6050_GYRO_YOUT_H) - self.y_offset
+
+                    # #accel_angle_x = math.atan2(accel_y, math.sqrt(accel_x**2 + accel_z**2)) * (180 / math.pi)
+                    # #accel_angle_y = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * (180 / math.pi)
+
+                    # #dt = time.time() - start_time
+                    # angle_x = math.atan(accel_x / 16384.0) * (180 / math.pi)
+                    # angle_y = math.atan(accel_y / 16384.0) * (180 / math.pi)
+
+
+                    # for sensor in self.sensors:
+                    #     if sensor._sensor_type == "x_angle":
+                    #         sensor.update_state(angle_x)
+                    #     elif sensor._sensor_type == "y_angle":
+                    #         sensor.update_state(angle_y)
+
+                    time.sleep(max(0, self.target_interval - (time.time() - start_time)))
+                except Exception as e:
+                    _LOGGER.error(f"Fehler beim Lesen der Sensordaten: {e}",stack_info=True, exc_info=True)
+                    break
 
 def read_raw_data(addr):
     try:
