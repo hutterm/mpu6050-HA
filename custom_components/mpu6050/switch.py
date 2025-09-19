@@ -13,5 +13,5 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Autoterm sensor platform."""
-    device: MPU6050Device = entry.data["device"]
+    device: MPU6050Device = entry.runtime_data
     async_add_entities([device.switch])

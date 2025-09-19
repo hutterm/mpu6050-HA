@@ -13,7 +13,7 @@ PLATFORMS = [Platform.SENSOR, Platform.SWITCH]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the MPU6050 integration from a config entry."""
-    entry["device"] = MPU6050Device(
+    entry.runtime_data = MPU6050Device(
         entry
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
