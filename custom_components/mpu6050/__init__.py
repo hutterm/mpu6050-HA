@@ -4,7 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
 
-from .MPU6050 import MPU6050Device
+from .MPU6050Device import MPU6050Device
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.info("MPU6050 integration is initializing")
