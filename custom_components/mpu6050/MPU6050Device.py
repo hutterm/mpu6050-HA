@@ -45,7 +45,7 @@ class MPU6050BaseSensor(SensorEntity):
 
     def update_state(self, value):
         self._state = round(value, 2)
-        _LOGGER.debug(f"{self._sensor_type} Zustand auf {self._state} aktualisiert.")
+        _LOGGER.debug(f"MPU6050 Sensor {self._attr_name} aktualisiert: {self._state}")
         self.hass.add_job(self.async_write_ha_state)
     
 class MPU6050TempSensor(MPU6050BaseSensor):
@@ -117,6 +117,7 @@ class MPU6050Device:
         
         self._stop_event = threading.Event()
         self._thread = None
+        self.start()
 
 
     @property
