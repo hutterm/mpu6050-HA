@@ -5,10 +5,17 @@ import serial
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
+from homeassistant.core import callback
 
 import os
 from smbus2 import SMBus
@@ -17,6 +24,28 @@ from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL
 from .MPUConstants import MPUConstants
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class OptionsFlowHandler(OptionsFlowWithReload):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required(
+                    OPTION_ROLL_OFFSET,
+                    default=0.0
+                ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
+                vol.Required(
+                    OPTION_PITCH_OFFSET,
+                    default=0.0
+                ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
+            }),
+        )
 
 def list_i2c_busses():
     """Return a list of available I2C bus numbers (e.g. [0, 1])."""
@@ -104,65 +133,14 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-
-    # async def async_step_options(self, user_input=None):
-    #     """Handle options flow."""
-    #     if user_input is not None:
-    #         return self.async_create_entry(title="", data=user_input)
-
-    #     # Get all temperature sensor entities
-    #     temperature_entities = []
-    #     for entity_id in self.hass.states.async_entity_ids():
-    #         state = self.hass.states.get(entity_id)
-    #         if (
-    #             state and 
-    #             state.attributes.get("device_class") == "temperature" and
-    #             entity_id.startswith("sensor.")
-    #         ):
-    #             temperature_entities.append(entity_id)
-
-    #     return self.async_show_form(
-    #         step_id="options",
-    #         data_schema=vol.Schema({
-    #             vol.Optional(ATTR_TEMPERATURE_ENTITY): vol.In(temperature_entities),
-    #         }),
-    #     )
     @staticmethod
-    def async_get_options_flow(config_entry):
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> OptionsFlowHandler:
         """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
-    
-    @staticmethod
-    def _test_connection(port: str) -> None:
-        """Test if the port is available."""
-        ser = None
-        try:
-            ser = serial.Serial(port, 9600, timeout=1)
-        except serial.SerialException:
-            raise CannotConnect
-        finally:
-            if ser:
-                ser.close()
+        return OptionsFlowHandler()
 
-class OptionsFlowHandler(config_entries.OptionsFlowWithReload):
-    async def async_step_init(self, user_input=None):
-        """Manage the options."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(
-                    OPTION_ROLL_OFFSET,
-                    default=0.0
-                ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
-                vol.Required(
-                    OPTION_PITCH_OFFSET,
-                    default=0.0
-                ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
-            }),
-        )
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
