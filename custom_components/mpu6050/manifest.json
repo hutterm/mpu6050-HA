@@ -2,7 +2,7 @@
     "domain": "mpu6050",
     "name": "MPU6050 Sensor",
     "codeowners": ["@huetterm"],
-    "config_flow": false,
+    "config_flow": true,
     "dependencies": [],
     "documentation": "https://github.com/hutterm/mpu6050-HA",
     "integration_type": "hub",
