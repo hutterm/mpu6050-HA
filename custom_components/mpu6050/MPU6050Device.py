@@ -98,6 +98,7 @@ class MPU6050Device:
         self.pitch_offset = entry.options.get(OPTION_PITCH_OFFSET, 0.0)
         self.freq_divider = 0xC7 # 1kHz/(199+1) = 5Hz
         self.freq_s = (self.freq_divider + 1) / 1000.0 # sample frequency in seconds
+        self.target_interval = 1.0 # target interval in seconds
         self.accel_range = 2.0
         self.sensors = [
             MPU6050BaseSensor(entry, "Acceleration X", "x_accel"),
@@ -177,7 +178,7 @@ class MPU6050Device:
 
             while not self._stop_event.is_set():
                 start_time = time.time()
-                target_ct = (int)(self.target_interval / freq_s)
+                target_ct = (int)(self.target_interval / self.freq_s)
                 try:
                     # 5hz frequency
                     ax_sum = 0.0
