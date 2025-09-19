@@ -127,7 +127,7 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     #             vol.Optional(ATTR_TEMPERATURE_ENTITY): vol.In(temperature_entities),
     #         }),
     #     )
-
+    @staticmethod
     def async_get_options_flow(config_entry):
         """Get the options flow for this handler."""
         return OptionsFlowHandler(config_entry)
