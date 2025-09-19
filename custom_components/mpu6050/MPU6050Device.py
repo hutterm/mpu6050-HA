@@ -5,6 +5,7 @@ import threading
 import asyncio
 
 from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from homeassistant.components.sensor import SensorEntity
