@@ -113,6 +113,9 @@ class MPU6050Device:
         
         self._callbacks = set()
         self._loop = asyncio.get_event_loop()
+        
+        self._stop_event = threading.Event()
+        self._thread = None
 
 
     @property
