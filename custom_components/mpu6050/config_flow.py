@@ -89,7 +89,7 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         bus_addresses = [
             (bus, addr)
             for bus in busses
-            for addr in await self.hass.async_add_executor_job(list_i2c_devices, bus,[MPUConstants.MPU6050_ADDRESS_AD0_LOW, MPUConstants.MPU6050_ADDRESS_AD0_HIGH+1])
+            for addr in await self.hass.async_add_executor_job(list_i2c_devices, bus,[MPUConstants.MPU6050_ADDRESS_AD0_LOW, MPUConstants.MPU6050_ADDRESS_AD0_HIGH])
         ]
 
         _LOGGER.debug("Detected I2C devices: %s", bus_addresses)
