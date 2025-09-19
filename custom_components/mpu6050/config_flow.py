@@ -9,7 +9,6 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithReload,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
@@ -26,7 +25,7 @@ from .MPUConstants import MPUConstants
 _LOGGER = logging.getLogger(__name__)
 
 
-class OptionsFlowHandler(OptionsFlowWithReload):
+class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
