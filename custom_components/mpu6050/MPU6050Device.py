@@ -33,7 +33,7 @@ class MPU6050BaseSensor(SensorEntity):
     def __init__(self, entry, label, name):
         self._state = 0.0
         self._attr_unique_id = f"{entry.entry_id}_{name}"
-        self._attr_name = label
+        self._attr_name = f"MPU6050 {entry.data[CONF_BUS]}-0x{entry.data[CONF_ADDRESS]:02X} {label}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
         }
@@ -59,13 +59,14 @@ class CustomSwitch(SwitchEntity):
     def __init__(self, device):
         self._is_on = True
         self._device = device
-        self._attr_name = "MPU6050 Enabled"
+        self._attr_name = f"MPU6050 {device.entry.data[CONF_BUS]}-0x{device.entry.data[CONF_ADDRESS]:02X} Enabled"
         self._attr_unique_id = f"{device.entry.entry_id}_enabled"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, device.entry.entry_id)},
             "name": f"MPU6050 {device.entry.data[CONF_BUS]}:0x{device.entry.data[CONF_ADDRESS]:02X}",
             "manufacturer": "InvenSense",
         }
+        self._attr_icon = "mdi:power"
 
     @property
     def is_on(self):
@@ -80,14 +81,6 @@ class CustomSwitch(SwitchEntity):
         self._is_on = False
         self._device.stop()
         self.schedule_update_ha_state()
-
-    @property
-    def unique_id(self):
-        return "mpu6050_switch"
-
-    @property
-    def icon(self):
-        return "mdi:power"
 
 class MPU6050Device:
     def __init__(self, entry: ConfigEntry):
