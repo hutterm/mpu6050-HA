@@ -19,7 +19,7 @@ from homeassistant.core import callback
 import os
 from smbus2 import SMBus
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET
+from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
 from .MPUConstants import MPUConstants
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +43,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     OPTION_PITCH_OFFSET,
                     default=0.0
                 ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
+                vol.Required(
+                    OPTION_TARGET_INTERVAL,
+                    default=1.0
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10.0)),
             }),
         )
 

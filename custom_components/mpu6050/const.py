@@ -13,3 +13,4 @@ CONF_ADDRESS = "address"
 # options
 OPTION_ROLL_OFFSET = "roll_offset"
 OPTION_PITCH_OFFSET = "pitch_offset"
+OPTION_TARGET_INTERVAL = "target_interval"

@@ -97,6 +97,15 @@ class MPU6050Device:
             MPU6050BaseSensor(entry, "Acceleration X", "x_accel"),
             MPU6050BaseSensor(entry, "Acceleration Y", "y_accel"),
             MPU6050BaseSensor(entry, "Acceleration Z", "z_accel"),
+            MPU6050BaseSensor(entry, "Max Acceleration X", "x_accel_max"),
+            MPU6050BaseSensor(entry, "Max Acceleration Y", "y_accel_max"),
+            MPU6050BaseSensor(entry, "Max Acceleration Z", "z_accel_max"),
+            MPU6050BaseSensor(entry, "Min Acceleration X", "x_accel_min"),
+            MPU6050BaseSensor(entry, "Min Acceleration Y", "y_accel_min"),
+            MPU6050BaseSensor(entry, "Min Acceleration Z", "z_accel_min"),
+            MPU6050BaseSensor(entry, "Pitch", "pitch"),
+            MPU6050BaseSensor(entry, "Roll", "roll"),
+
             MPU6050TempSensor(entry),
         ]
         self.switch = CustomSwitch(self)
@@ -145,7 +154,9 @@ class MPU6050Device:
     def read_sensor_data(self):
 
         while not self._stop_event.is_set():
-
+    
+            p = self.pitch_offset * np.pi / 180.0
+            r = self.roll_offset  * np.pi / 180.0
             mpu=None
             try:
                 # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
@@ -174,25 +185,58 @@ class MPU6050Device:
                 start_time = time.time()
                 target_ct = (int)(self.target_interval / self.freq_s)
                 try:
-                    # 5hz frequency
                     ax_sum = 0.0
                     ay_sum = 0.0
                     az_sum = 0.0
-                    #ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                    ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     for i in range(0,target_ct):
                         time.sleep(max(0, i*self.freq_s - (time.time() - start_time)))
                         accel = mpu.get_acceleration()
-                        Ax = accel.x * self.accel_range*g / 2**15
-                        Ay = accel.y * self.accel_range*g / 2**15
-                        Az = accel.z * self.accel_range*g / 2**15
-                        ax_sum += Ax
-                        ay_sum += Ay
-                        az_sum += Az
+                        Ax = accel.x * self.accel_range / 2**15
+                        Ay = accel.y * self.accel_range / 2**15
+                        Az = accel.z * self.accel_range / 2**15
+                        
+                        # Apply Ry(-p)
+                        x1 = Ax * np.cos(p) - Az * np.sin(p)
+                        y1 = Ay
+                        z1 = Ax * np.sin(p) + Az * np.cos(p)
 
-                    self.sensors[0].update_state(ax_sum / target_ct)
-                    self.sensors[1].update_state(ay_sum / target_ct)
-                    self.sensors[2].update_state(az_sum / target_ct)
-                    self.sensors[3].update_state(mpu.get_temp())
+                        # Then Rx(-r)
+                        x_corr = x1
+                        y_corr = y1 * np.cos(r) + z1 * np.sin(r)
+                        z_corr = -y1 * np.sin(r) + z1 * np.cos(r)
+
+                        ax_sum += x_corr
+                        ay_sum += y_corr
+                        az_sum += z_corr
+                        ax_max = max(ax_max, x_corr)
+                        ay_max = max(ay_max, y_corr)
+                        az_max = max(az_max, z_corr)
+                        ax_min = min(ax_min, x_corr)
+                        ay_min = min(ay_min, y_corr)
+                        az_min = min(az_min, z_corr)
+
+                    Ax = ax_sum / target_ct
+                    Ay = ay_sum / target_ct
+                    Az = az_sum / target_ct
+
+
+                    roll = -(np.arctan2(Ay, Az) * 180.0 / np.pi)
+                    pitch = np.arctan2(-Ax, np.sqrt(Ay**2 + Az**2)) * 180.0 / np.pi
+
+
+                    self.sensors[0].update_state(Ax)
+                    self.sensors[1].update_state(Ay)
+                    self.sensors[2].update_state(Az)
+                    self.sensors[3].update_state(ax_max)
+                    self.sensors[4].update_state(ay_max)
+                    self.sensors[5].update_state(az_max)
+                    self.sensors[6].update_state(ax_min)
+                    self.sensors[7].update_state(ay_min)
+                    self.sensors[8].update_state(az_min)
+                    self.sensors[9].update_state(pitch)
+                    self.sensors[10].update_state(roll)
+                    self.sensors[11].update_state(mpu.get_temp())
 
                     # for i in range(0,20): # infinite loop
                     #     if mpu.isreadyFIFO(packet_size): # Check if FIFO data are ready to use...
