@@ -153,13 +153,14 @@ class MPU6050Device:
 
         while not self._stop_event.is_set():
             _LOGGER.debug("Initialisiere MPU6050...")
-    
-            p = self.pitch_offset * np.pi / 180.0
-            r = self.roll_offset  * np.pi / 180.0
 
             self.target_interval = self.entry.options.get(OPTION_TARGET_INTERVAL, 1.0) # target interval in seconds
             self.roll_offset = self.entry.options.get(OPTION_ROLL_OFFSET, 0.0)
             self.pitch_offset = self.entry.options.get(OPTION_PITCH_OFFSET, 0.0)
+            
+            p = self.pitch_offset * np.pi / 180.0
+            r = self.roll_offset  * np.pi / 180.0
+
             mpu=None
             try:
                 # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
