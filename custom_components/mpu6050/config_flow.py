@@ -26,6 +26,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -37,15 +42,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema({
                 vol.Required(
                     OPTION_ROLL_OFFSET,
-                    default=0.0
+                    default=self.config_entry.options.get(OPTION_ROLL_OFFSET, 0.0)
                 ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
                 vol.Required(
                     OPTION_PITCH_OFFSET,
-                    default=0.0
+                    default=self.config_entry.options.get(OPTION_PITCH_OFFSET, 0.0)
                 ): vol.All(vol.Coerce(float), vol.Range(min=-180.0, max=180.0)),
                 vol.Required(
                     OPTION_TARGET_INTERVAL,
-                    default=1.0
+                    default=self.config_entry.options.get(OPTION_TARGET_INTERVAL, 1.0)
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10.0)),
             }),
         )
@@ -146,7 +151,7 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: ConfigEntry,
     ) -> OptionsFlowHandler:
         """Get the options flow for this handler."""
-        return OptionsFlowHandler()
+        return OptionsFlowHandler(config_entry)
 
 
 class CannotConnect(HomeAssistantError):

@@ -141,8 +141,7 @@ class MPU6050Device:
             self._thread.start()
             _LOGGER.info("MPU6050SensorManager gestartet.")
         else:
-            _LOGGER.warning("Datenlese-Thread läuft bereits.")
-            _LOGGER.warning(self._thread.is_alive())
+            _LOGGER.warning(f"Datenlese-Thread läuft bereits. {self._thread.is_alive()}")
 
     def stop(self):
         if self._thread is not None and self._thread.is_alive():
@@ -154,6 +153,7 @@ class MPU6050Device:
     def read_sensor_data(self):
 
         while not self._stop_event.is_set():
+            _LOGGER.debug("Initialisiere MPU6050...")
     
             p = self.pitch_offset * np.pi / 180.0
             r = self.roll_offset  * np.pi / 180.0
