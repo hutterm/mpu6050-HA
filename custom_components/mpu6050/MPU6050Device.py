@@ -44,7 +44,7 @@ class MPU6050BaseSensor(SensorEntity):
         return self._state
 
     def update_state(self, value):
-        self._state = round(value, 2)
+        self._state = value
         _LOGGER.debug(f"MPU6050 Sensor {self._attr_name} aktualisiert: {self._state}")
         self.hass.add_job(self.async_write_ha_state)
     
