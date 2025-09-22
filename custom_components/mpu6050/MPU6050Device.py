@@ -23,7 +23,7 @@ from scipy.spatial.transform import Rotation as R
 from quat import XYZVector as V
 import numpy as np
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET
+from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,11 +87,8 @@ class MPU6050Device:
         self.entry = entry
         self.bus = entry.data[CONF_BUS]
         self.address = entry.data[CONF_ADDRESS]
-        self.roll_offset = entry.options.get(OPTION_ROLL_OFFSET, 0.0)
-        self.pitch_offset = entry.options.get(OPTION_PITCH_OFFSET, 0.0)
         self.freq_divider = 0xC7 # 1kHz/(199+1) = 5Hz
         self.freq_s = (self.freq_divider + 1) / 1000.0 # sample frequency in seconds
-        self.target_interval = 1.0 # target interval in seconds
         self.accel_range = 2.0
         self.sensors = [
             MPU6050BaseSensor(entry, "Acceleration X", "x_accel"),
@@ -157,6 +154,10 @@ class MPU6050Device:
     
             p = self.pitch_offset * np.pi / 180.0
             r = self.roll_offset  * np.pi / 180.0
+
+            self.target_interval = self.entry.options.get(OPTION_TARGET_INTERVAL, 1.0) # target interval in seconds
+            self.roll_offset = self.entry.options.get(OPTION_ROLL_OFFSET, 0.0)
+            self.pitch_offset = self.entry.options.get(OPTION_PITCH_OFFSET, 0.0)
             mpu=None
             try:
                 # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
