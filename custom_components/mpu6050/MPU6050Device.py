@@ -17,7 +17,7 @@ from .MPUConstants import MPUConstants
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.sensor import STATE_CLASS_MEASUREMENT
+from homeassistant.components.sensor import SensorStateClass
 
 
 
@@ -39,7 +39,7 @@ class MPU6050BaseSensor(SensorEntity):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
         }
-        self._attr_state_class = STATE_CLASS_MEASUREMENT
+        self._attr_state_class = SensorStateClass.MEASUREMENT
         _LOGGER.debug(f"MPU6050 Sensor {name} initialisiert.")
 
     @property
