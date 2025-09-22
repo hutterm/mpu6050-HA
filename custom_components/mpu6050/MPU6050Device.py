@@ -146,6 +146,8 @@ class MPU6050Device:
             self._thread.join()
             self._thread = None
             _LOGGER.info("MPU6050SensorManager gestoppt.")
+        else:
+            _LOGGER.warning("Datenlese-Thread ist nicht aktiv.")
 
     def read_sensor_data(self):
 
