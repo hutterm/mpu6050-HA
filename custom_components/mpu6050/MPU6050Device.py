@@ -23,9 +23,7 @@ from quat import XYZVector as V
 import asyncio
 import math
 import time
-import threading
 import logging
-import numpy as np
 
 from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
 
@@ -34,8 +32,8 @@ _LOGGER = logging.getLogger(__name__)
 class MPU6050BaseSensor(SensorEntity):
     should_poll = False
     def __init__(self, device, label, name):
-    	self.device = device
-    	self.hass = device.hass
+        self.device = device
+        self.hass = device.hass
         self._state = 0.0
         self._attr_unique_id = f"{device.entry.entry_id}_{name}"
         self._attr_name = f"MPU6050 {device.entry.data[CONF_BUS]}-0x{device.entry.data[CONF_ADDRESS]:02X} {label}"
@@ -43,28 +41,22 @@ class MPU6050BaseSensor(SensorEntity):
             "identifiers": {(DOMAIN, device.entry.entry_id)},
         }
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        _LOGGER.debug(f"MPU6050 Sensor {name} initialisiert.")
+        _LOGGER.debug("MPU6050 Sensor %s initialisiert.", name)
 
     @property
     def native_value(self):
         return self._state
 
-    def update_state(self, value):
+    async def update_state(self, value):
         self._state = value
-        _LOGGER.debug(f"MPU6050 Sensor {self._attr_name} aktualisiert: {self._state}")
-        if not getattr(self, "hass", None):
-            # not yet added to hass
-            return
-        try:
-            asyncio.run_coroutine_threadsafe(self.async_write_ha_state(), self.hass.loop)
-        except Exception as ex:
-            _LOGGER.exception("Failed to schedule HA state write: %s", ex)
+        await self.async_write_ha_state()
+        _LOGGER.debug("MPU6050 Sensor %s aktualisiert: %s", self._attr_name, self._state)
 
 
 class MPU6050TempSensor(MPU6050BaseSensor):
     def __init__(self, device):
         super().__init__(device, "Temperature", "temp")
-        self._attr_native_unit_of_measurement = "°C"
+        self._attr_native_unit_of_measurement = TEMP_CELSIUS
         self._attr_icon = "mdi:thermometer"
         self._attr_device_class = "temperature"
 
@@ -125,13 +117,11 @@ class MPU6050Device:
         self._enabled = True
         self._pitch = 0.0
         self._roll = 0.0
+
+        self._task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
         
-        self._callbacks = set()
-        self._loop = asyncio.get_event_loop()
-        
-        self._stop_event = threading.Event()
-        self._thread = None
-        self.start()
+
 
 
     @property
@@ -147,55 +137,48 @@ class MPU6050Device:
         return self._roll
 
     def start(self):
-        if self._thread is None or not self._thread.is_alive():
+        if self._task is None or self._task.done():
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self.read_sensor_data)
-            self._thread.start()
+            self._task = self.hass.loop.create_task(self._run_loop())
             _LOGGER.info("MPU6050SensorManager gestartet.")
         else:
-            _LOGGER.warning(f"Datenlese-Thread läuft bereits. {self._thread.is_alive()}")
+            _LOGGER.warning("Datenlese-Thread läuft bereits. %s", self._task is not None and not self._task.done())
 
     def stop(self):
-        if self._thread is not None and self._thread.is_alive():
+        if self._task:
             self._stop_event.set()
-            self._thread.join()
-            self._thread = None
+            self._task.cancel()
+            self._task = None
             _LOGGER.info("MPU6050SensorManager gestoppt.")
         else:
             _LOGGER.warning("Datenlese-Thread ist nicht aktiv.")
 
-    def read_sensor_data(self):
+    async def _run_loop(self):
 
+        backoff = 1
         while not self._stop_event.is_set():
-            _LOGGER.debug("Initialisiere MPU6050...")
 
             self.target_interval = self.entry.options.get(OPTION_TARGET_INTERVAL, 1.0) # target interval in seconds
             self.roll_offset = self.entry.options.get(OPTION_ROLL_OFFSET, 0.0)
             self.pitch_offset = self.entry.options.get(OPTION_PITCH_OFFSET, 0.0)
             
-            p = self.pitch_offset * np.pi / 180.0
-            r = self.roll_offset  * np.pi / 180.0
-
-            mpu=None
+            p = self.pitch_offset * math.pi / 180.0
+            r = self.roll_offset  * math.pi / 180.0
             try:
-                # bus.write_byte_data(MPU6050_ADDR, MPU6050_PWR_MGMT_1, 0)
-
-                
-                # Make an MPU6050
                 mpu = MPU6050(self.bus, self.address, self.freq_divider,a_xGOff=57,a_yGOff=24,a_zGOff=149)
                 time.sleep(1) # wait for sensor to stabilize
-
+                
+                backoff = 1
             except Exception as e:
-                _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
+                _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
                 continue
             
-
-            g = 9.82 # gravity acceleration (m/s^2)
-
-            temp_timer = time.time()
+            temp_timer = time.monotonic()
 
             while not self._stop_event.is_set():
-                start_time = time.time()
+                start = time.monotonic()
 
                 target_ct = int(self.target_interval / self.freq_s)
                 target_ct = max(1, target_ct)
@@ -236,8 +219,8 @@ class MPU6050Device:
                     Ay = ay_sum / target_ct
                     Az = az_sum / target_ct
 
-                    roll = -(np.arctan2(Ay, Az) * 180.0 / np.pi)
-                    pitch = np.arctan2(-Ax, np.sqrt(Ay**2 + Az**2)) * 180.0 / np.pi
+                    roll = -(math.atan2(Ay, Az) * 180.0 / math.pi)
+                    pitch = math.atan2(-Ax, math.sqrt(Ay**2 + Az**2)) * 180.0 / math.pi
 
 
                     self.sensors[0].update_state(Ax)
@@ -251,12 +234,12 @@ class MPU6050Device:
                     self.sensors[8].update_state(az_min)
                     self.sensors[9].update_state(pitch)
                     self.sensors[10].update_state(roll)
-                    if time.time() - temp_timer >= self.temp_freq:
-                        temp_timer = time.time()
+                    if time.monotonic() - temp_timer >= self.temp_freq:
                         self.sensors[11].update_state(mpu.get_temp())
+                        temp_timer = time.monotonic()
 
-                    time.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.time() - start_time)))
+                    await asyncio.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.monotonic() - start)))
                 except Exception as e:
-                    _LOGGER.error(f"Fehler beim Lesen der Sensordaten: {e}",stack_info=True, exc_info=True)
+                    _LOGGER.exception("Read error: %s", e)
                     break
-            time.sleep(5) # wait before re-initializing the sensor
+            await asyncio.sleep(5) # wait before re-initializing the sensor
