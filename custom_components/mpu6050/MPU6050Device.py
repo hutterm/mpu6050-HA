@@ -80,12 +80,12 @@ class CustomSwitch(SwitchEntity):
     async def async_turn_on(self, **kwargs):
         self._is_on = True
         self._device.start()
-        await self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
     async def async_turn_off(self, **kwargs):
         self._is_on = False
         self._device.stop()
-        await self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
 class MPU6050Device:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
@@ -114,19 +114,12 @@ class MPU6050Device:
         ]
         self.switch = CustomSwitch(self)
 
-        self._enabled = True
         self._pitch = 0.0
         self._roll = 0.0
 
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         
-
-
-
-    @property
-    def enabled(self):
-        return self._enabled
     
     @property
     def pitch(self):
