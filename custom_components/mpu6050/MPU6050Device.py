@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.sensor import SensorStateClass
-from homeassistant.const import TEMP_CELSIUS
 
 
 
@@ -56,7 +55,7 @@ class MPU6050BaseSensor(SensorEntity):
 class MPU6050TempSensor(MPU6050BaseSensor):
     def __init__(self, device):
         super().__init__(device, "Temperature", "temp")
-        self._attr_native_unit_of_measurement = TEMP_CELSIUS
+        self._attr_native_unit_of_measurement = "°C"
         self._attr_icon = "mdi:thermometer"
         self._attr_device_class = "temperature"
 
