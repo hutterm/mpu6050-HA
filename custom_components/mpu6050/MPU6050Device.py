@@ -23,6 +23,7 @@ import asyncio
 import math
 import time
 import logging
+import random
 
 from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
 
@@ -189,7 +190,7 @@ class MPU6050Device:
                     for i in range(0,target_ct):
                         # add small random offset to the wait time to avoid always reading at the same time
                         # this helps to avoid interference with other I2C devices
-                        time.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start_time)))
+                        await asyncio.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start)))
                         accel = mpu.get_acceleration()
                         Ax = accel.x * self.accel_range / (2**15)
                         Ay = accel.y * self.accel_range / (2**15)
