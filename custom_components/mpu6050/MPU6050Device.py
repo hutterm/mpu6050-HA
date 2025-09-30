@@ -1,11 +1,6 @@
 
-import logging
 from random import random
-import time
-import threading
-import asyncio
 
-from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
@@ -25,16 +20,22 @@ from homeassistant.const import TEMP_CELSIUS
 
 from scipy.spatial.transform import Rotation as R
 from quat import XYZVector as V
+import asyncio
+import math
+import time
+import threading
+import logging
 import numpy as np
 
 from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class MPU6050BaseSensor(SensorEntity):
     should_poll = False
     def __init__(self, device, label, name):
+    	self.device = device
+    	self.hass = device.hass
         self._state = 0.0
         self._attr_unique_id = f"{device.entry.entry_id}_{name}"
         self._attr_name = f"MPU6050 {device.entry.data[CONF_BUS]}-0x{device.entry.data[CONF_ADDRESS]:02X} {label}"
@@ -45,14 +46,21 @@ class MPU6050BaseSensor(SensorEntity):
         _LOGGER.debug(f"MPU6050 Sensor {name} initialisiert.")
 
     @property
-    def state(self):
+    def native_value(self):
         return self._state
 
     def update_state(self, value):
         self._state = value
         _LOGGER.debug(f"MPU6050 Sensor {self._attr_name} aktualisiert: {self._state}")
-        self.hass.add_job(self.async_write_ha_state)
-    
+        if not getattr(self, "hass", None):
+            # not yet added to hass
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self.async_write_ha_state(), self.hass.loop)
+        except Exception as ex:
+            _LOGGER.exception("Failed to schedule HA state write: %s", ex)
+
+
 class MPU6050TempSensor(MPU6050BaseSensor):
     def __init__(self, device):
         super().__init__(device, "Temperature", "temp")
@@ -77,15 +85,15 @@ class CustomSwitch(SwitchEntity):
     def is_on(self):
         return self._is_on
 
-    def turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs):
         self._is_on = True
         self._device.start()
-        self.schedule_update_ha_state()
+        await self.async_write_ha_state()
 
-    def turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs):
         self._is_on = False
         self._device.stop()
-        self.schedule_update_ha_state()
+        await self.async_write_ha_state()
 
 class MPU6050Device:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
@@ -189,30 +197,30 @@ class MPU6050Device:
             while not self._stop_event.is_set():
                 start_time = time.time()
 
-                target_ct = (int)(self.target_interval / self.freq_s)
+                target_ct = int(self.target_interval / self.freq_s)
+                target_ct = max(1, target_ct)
+
                 try:
-                    ax_sum = 0.0
-                    ay_sum = 0.0
-                    az_sum = 0.0
+                    ax_sum = ay_sum = az_sum = 0.0
                     ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     for i in range(0,target_ct):
                         # add small random offset to the wait time to avoid always reading at the same time
                         # this helps to avoid interference with other I2C devices
                         time.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start_time)))
                         accel = mpu.get_acceleration()
-                        Ax = accel.x * self.accel_range / 2**15
-                        Ay = accel.y * self.accel_range / 2**15
-                        Az = accel.z * self.accel_range / 2**15
-                        
-                        # Apply Ry(-p)
-                        x1 = Ax * np.cos(p) - Az * np.sin(p)
+                        Ax = accel.x * self.accel_range / (2**15)
+                        Ay = accel.y * self.accel_range / (2**15)
+                        Az = accel.z * self.accel_range / (2**15)
+
+                        # apply rotation corrections (Ry(-p) then Rx(-r))
+                        x1 = Ax * math.cos(p) - Az * math.sin(p)
                         y1 = Ay
-                        z1 = Ax * np.sin(p) + Az * np.cos(p)
+                        z1 = Ax * math.sin(p) + Az * math.cos(p)
 
                         # Then Rx(-r)
                         x_corr = x1
-                        y_corr = y1 * np.cos(r) + z1 * np.sin(r)
-                        z_corr = -y1 * np.sin(r) + z1 * np.cos(r)
+                        y_corr = y1 * math.cos(r) + z1 * math.sin(r)
+                        z_corr = -y1 * math.sin(r) + z1 * math.cos(r)
 
                         ax_sum += x_corr
                         ay_sum += y_corr
@@ -227,7 +235,6 @@ class MPU6050Device:
                     Ax = ax_sum / target_ct
                     Ay = ay_sum / target_ct
                     Az = az_sum / target_ct
-
 
                     roll = -(np.arctan2(Ay, Az) * 180.0 / np.pi)
                     pitch = np.arctan2(-Ax, np.sqrt(Ay**2 + Az**2)) * 180.0 / np.pi
