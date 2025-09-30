@@ -51,6 +51,7 @@ import ctypes
 import time
 import smbus2
 import csv
+import asyncio
 from .MPUConstants import MPUConstants as C
 from quat import Quaternion as Q
 from quat import XYZVector as V
@@ -70,8 +71,7 @@ class MPU6050:
     # The offsets are different for each device and should be changed
     # accordingly using a calibration procedure
     def __init__(self, a_bus=1, a_address=C.MPU6050_DEFAULT_ADDRESS, freq_divider=4,
-                 a_xAOff=None, a_yAOff=None, a_zAOff=None, a_xGOff=None,
-                 a_yGOff=None, a_zGOff=None, a_debug=False):
+                 a_debug=False):
 
         ### Define the divider of the DMP frequency
         self.freq_divider = freq_divider
@@ -80,7 +80,12 @@ class MPU6050:
         self.__dev_id = a_address
         # Connect to num 1 SMBus
         self.__bus = smbus2.SMBus(a_bus)
-        time.sleep(2)
+        self.__debug = a_debug
+    
+    async def init_async(self, a_xAOff=None, a_yAOff=None, a_zAOff=None, a_xGOff=None,
+                 a_yGOff=None, a_zGOff=None, ):
+
+        await asyncio.sleep(2)
         # Set clock source to gyro
         self.set_clock_source(C.MPU6050_CLOCK_PLL_XGYRO)
         # Set accelerometer range
@@ -102,7 +107,6 @@ class MPU6050:
             self.set_y_gyro_offset(a_yGOff)
         if a_zGOff:
             self.set_z_gyro_offset(a_zGOff)
-        self.__debug = a_debug
 
     ###  ###
     def isreadyFIFO(self, packet_size):

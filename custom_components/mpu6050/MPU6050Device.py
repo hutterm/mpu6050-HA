@@ -164,9 +164,10 @@ class MPU6050Device:
             p = self.pitch_offset * math.pi / 180.0
             r = self.roll_offset  * math.pi / 180.0
             try:
-                mpu = MPU6050(self.bus, self.address, self.freq_divider,a_xGOff=57,a_yGOff=24,a_zGOff=149)
-                time.sleep(1) # wait for sensor to stabilize
-                
+                mpu = MPU6050(self.bus, self.address, self.freq_divider)
+                await mpu.init_async(a_xGOff=57,a_yGOff=24,a_zGOff=149)
+                await asyncio.sleep(1) # wait for sensor to stabilize
+
                 backoff = 1
             except Exception as e:
                 _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
