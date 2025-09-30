@@ -47,9 +47,9 @@ class MPU6050BaseSensor(SensorEntity):
     def native_value(self):
         return self._state
 
-    async def update_state(self, value):
+    def update_state(self, value):
         self._state = value
-        await self.async_write_ha_state()
+        self.schedule_update_ha_state()
         _LOGGER.debug("MPU6050 Sensor %s aktualisiert: %s", self._attr_name, self._state)
 
 
