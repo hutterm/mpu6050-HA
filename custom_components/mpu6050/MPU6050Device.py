@@ -1,5 +1,6 @@
 
 import logging
+from random import random
 import time
 import threading
 import asyncio
@@ -18,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.sensor import SensorStateClass
+from homeassistant.const import TEMP_CELSIUS
 
 
 
@@ -32,12 +34,12 @@ _LOGGER = logging.getLogger(__name__)
 
 class MPU6050BaseSensor(SensorEntity):
     should_poll = False
-    def __init__(self, entry, label, name):
+    def __init__(self, device, label, name):
         self._state = 0.0
-        self._attr_unique_id = f"{entry.entry_id}_{name}"
-        self._attr_name = f"MPU6050 {entry.data[CONF_BUS]}-0x{entry.data[CONF_ADDRESS]:02X} {label}"
+        self._attr_unique_id = f"{device.entry.entry_id}_{name}"
+        self._attr_name = f"MPU6050 {device.entry.data[CONF_BUS]}-0x{device.entry.data[CONF_ADDRESS]:02X} {label}"
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
+            "identifiers": {(DOMAIN, device.entry.entry_id)},
         }
         self._attr_state_class = SensorStateClass.MEASUREMENT
         _LOGGER.debug(f"MPU6050 Sensor {name} initialisiert.")
@@ -52,9 +54,9 @@ class MPU6050BaseSensor(SensorEntity):
         self.hass.add_job(self.async_write_ha_state)
     
 class MPU6050TempSensor(MPU6050BaseSensor):
-    def __init__(self,entry):
-        super().__init__(entry, "Temperature", "temp")
-        self._attr_unit_of_measurement = "°C"
+    def __init__(self, device):
+        super().__init__(device, "Temperature", "temp")
+        self._attr_native_unit_of_measurement = "°C"
         self._attr_icon = "mdi:thermometer"
         self._attr_device_class = "temperature"
 
@@ -86,27 +88,29 @@ class CustomSwitch(SwitchEntity):
         self.schedule_update_ha_state()
 
 class MPU6050Device:
-    def __init__(self, entry: ConfigEntry):
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
+        self.hass = hass
         self.entry = entry
         self.bus = entry.data[CONF_BUS]
         self.address = entry.data[CONF_ADDRESS]
         self.freq_divider = 0xC7 # 1kHz/(199+1) = 5Hz
         self.freq_s = (self.freq_divider + 1) / 1000.0 # sample frequency in seconds
+        self.temp_freq = 10.0 # read temperature every 10 seconds
         self.accel_range = 2.0
         self.sensors = [
-            MPU6050BaseSensor(entry, "Acceleration X", "x_accel"),
-            MPU6050BaseSensor(entry, "Acceleration Y", "y_accel"),
-            MPU6050BaseSensor(entry, "Acceleration Z", "z_accel"),
-            MPU6050BaseSensor(entry, "Max Acceleration X", "x_accel_max"),
-            MPU6050BaseSensor(entry, "Max Acceleration Y", "y_accel_max"),
-            MPU6050BaseSensor(entry, "Max Acceleration Z", "z_accel_max"),
-            MPU6050BaseSensor(entry, "Min Acceleration X", "x_accel_min"),
-            MPU6050BaseSensor(entry, "Min Acceleration Y", "y_accel_min"),
-            MPU6050BaseSensor(entry, "Min Acceleration Z", "z_accel_min"),
-            MPU6050BaseSensor(entry, "Pitch", "pitch"),
-            MPU6050BaseSensor(entry, "Roll", "roll"),
+            MPU6050BaseSensor(self, "Acceleration X", "x_accel"),
+            MPU6050BaseSensor(self, "Acceleration Y", "y_accel"),
+            MPU6050BaseSensor(self, "Acceleration Z", "z_accel"),
+            MPU6050BaseSensor(self, "Max Acceleration X", "x_accel_max"),
+            MPU6050BaseSensor(self, "Max Acceleration Y", "y_accel_max"),
+            MPU6050BaseSensor(self, "Max Acceleration Z", "z_accel_max"),
+            MPU6050BaseSensor(self, "Min Acceleration X", "x_accel_min"),
+            MPU6050BaseSensor(self, "Min Acceleration Y", "y_accel_min"),
+            MPU6050BaseSensor(self, "Min Acceleration Z", "z_accel_min"),
+            MPU6050BaseSensor(self, "Pitch", "pitch"),
+            MPU6050BaseSensor(self, "Roll", "roll"),
 
-            MPU6050TempSensor(entry),
+            MPU6050TempSensor(self),
         ]
         self.switch = CustomSwitch(self)
 
@@ -173,23 +177,18 @@ class MPU6050Device:
                 mpu = MPU6050(self.bus, self.address, self.freq_divider,a_xGOff=57,a_yGOff=24,a_zGOff=149)
                 time.sleep(1) # wait for sensor to stabilize
 
-                # # Initiate your DMP
-                # mpu.dmp_initialize()
-                # mpu.set_DMP_enabled(True)
-
             except Exception as e:
                 _LOGGER.error(f"Fehler bei der Initialisierung des MPU6050: {e}")
                 continue
             
-            # packet_size = mpu.DMP_get_FIFO_packet_size()
-            # FIFO_buffer = [0]*64
 
             g = 9.82 # gravity acceleration (m/s^2)
-            # r = R.from_euler('y', -90, degrees=True)
-            # angle_x, angle_y = 0.0, 0.0
+
+            temp_timer = time.time()
 
             while not self._stop_event.is_set():
                 start_time = time.time()
+
                 target_ct = (int)(self.target_interval / self.freq_s)
                 try:
                     ax_sum = 0.0
@@ -197,7 +196,9 @@ class MPU6050Device:
                     az_sum = 0.0
                     ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     for i in range(0,target_ct):
-                        time.sleep(max(0, i*self.freq_s - (time.time() - start_time)))
+                        # add small random offset to the wait time to avoid always reading at the same time
+                        # this helps to avoid interference with other I2C devices
+                        time.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start_time)))
                         accel = mpu.get_acceleration()
                         Ax = accel.x * self.accel_range / 2**15
                         Ay = accel.y * self.accel_range / 2**15
@@ -243,93 +244,11 @@ class MPU6050Device:
                     self.sensors[8].update_state(az_min)
                     self.sensors[9].update_state(pitch)
                     self.sensors[10].update_state(roll)
-                    self.sensors[11].update_state(mpu.get_temp())
+                    if time.time() - temp_timer >= self.temp_freq:
+                        temp_timer = time.time()
+                        self.sensors[11].update_state(mpu.get_temp())
 
-                    # for i in range(0,20): # infinite loop
-                    #     if mpu.isreadyFIFO(packet_size): # Check if FIFO data are ready to use...
-                            
-                    #         FIFO_buffer = mpu.get_FIFO_bytes(packet_size) # get all the DMP data here
-                            
-                    #         # # raw acceleration
-                    #         # accel = mpu.get_acceleration()
-                    #         # Ax = accel.x * 2*g / 2**15
-                    #         # Ay = accel.y * 2*g / 2**15
-                    #         # Az = accel.z * 2*g / 2**15
-
-                    #         # DMP acceleration (less noisy acceleration - based on fusion)
-                    #         accel_dmp = mpu.DMP_get_acceleration_int16(FIFO_buffer)
-                    #         Ax_dmp = accel_dmp.x * accel_range*g / 2**15
-                    #         Ay_dmp = accel_dmp.y * accel_range*g / 2**15
-                    #         Az_dmp = accel_dmp.z * accel_range*g / 2**15
-
-                    #         # # raw gyro (full range: [-250, +250]) (unit: degree / second)
-                    #         # gyro = mpu.get_rotation()
-                    #         # Gx = gyro.x * 250 / 2**15
-                    #         # Gy = gyro.y * 250 / 2**15
-                    #         # Gz = gyro.z * 250 / 2**15
-                            
-                    #         # a_quat = mpu.DMP_get_quaternion_int16(FIFO_buffer)
-                    #         # quat = R.from_quat((a_quat.x,a_quat.y,a_quat.z,a_quat.w))
-                    #         # quat = r * quat
-                    #         # rpy = quat.as_euler('zyx', True)
-                            
-                    #         # yaw   = rpy[0]
-                    #         # pitch = rpy[1]
-                    #         # roll  = rpy[2]
-                    #         # # grav = mpu.DMP_get_gravity(q)
-                    #         # roll_pitch_yaw = mpu.DMP_get_euler_roll_pitch_yaw(q)
-                    #         self.sensors[0].update_state(Ax_dmp)
-                    #         self.sensors[1].update_state(Ay_dmp)
-                    #         self.sensors[2].update_state(Az_dmp)
-                    #         self.sensors[3].update_state(mpu.get_temp())
-                    #         # print(f'Ax:  {Ax:7.2f}, Ay:  {Ay:7.2f}, Az:  {Az:7.2f}')
-                    #         _LOGGER.debug(f'AxD: {Ax_dmp:7.2f}, AyD: {Ay_dmp:7.2f}, AzD: {Az_dmp:7.2f}')
-                    #         # _LOGGER.debug(f"Orientation → Roll: {roll:.2f}°, Pitch: {pitch:.2f}°, Yaw: {yaw:.2f}°")
-                    #         _LOGGER.debug(f'temp: {mpu.get_temp()}' )
-                            
-                    #         break
-                    # accel_x = 0
-                    # accel_y = 0
-                    # accel_z = 0
-                    # # repeat readings 10 times and average them
-
-                    # for _ in range(10):
-                    #     accel_x += read_raw_data(MPU6050_ACCEL_XOUT_H)
-                    #     accel_y += read_raw_data(MPU6050_ACCEL_YOUT_H)
-                    #     accel_z += read_raw_data(MPU6050_ACCEL_ZOUT_H)
-                    # accel_x /= 10
-                    # accel_y /= 10
-                    # accel_z /= 10
-
-                    # # normalize Vector
-                    # norm = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
-                    # if norm != 0:
-                    #     accel_x /= norm
-                    #     accel_y /= norm
-                    #     accel_z /= norm
-                    
-                    # self.sensors[0].update_state(accel_x)
-                    # self.sensors[1].update_state(accel_y)
-                    # self.sensors[2].update_state(accel_z)
-
-                    # #gyro_x = read_raw_data(MPU6050_GYRO_XOUT_H) - self.x_offset
-                    # #gyro_y = read_raw_data(MPU6050_GYRO_YOUT_H) - self.y_offset
-
-                    # #accel_angle_x = math.atan2(accel_y, math.sqrt(accel_x**2 + accel_z**2)) * (180 / math.pi)
-                    # #accel_angle_y = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * (180 / math.pi)
-
-                    # #dt = time.time() - start_time
-                    # angle_x = math.atan(accel_x / 16384.0) * (180 / math.pi)
-                    # angle_y = math.atan(accel_y / 16384.0) * (180 / math.pi)
-
-
-                    # for sensor in self.sensors:
-                    #     if sensor._sensor_type == "x_angle":
-                    #         sensor.update_state(angle_x)
-                    #     elif sensor._sensor_type == "y_angle":
-                    #         sensor.update_state(angle_y)
-
-                    time.sleep(max(0, self.target_interval - (time.time() - start_time)))
+                    time.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.time() - start_time)))
                 except Exception as e:
                     _LOGGER.error(f"Fehler beim Lesen der Sensordaten: {e}",stack_info=True, exc_info=True)
                     break
