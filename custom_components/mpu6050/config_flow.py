@@ -19,7 +19,7 @@ from homeassistant.core import callback
 import os
 from smbus2 import SMBus
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
+from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL, OPTION_I2C_LOCKS_KEY
 from .MPUConstants import MPUConstants
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +48,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     OPTION_TARGET_INTERVAL,
                     default=self.config_entry.options.get(OPTION_TARGET_INTERVAL, 1.0)
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10.0)),
+                vol.Required(
+                    OPTION_I2C_LOCKS_KEY,
+                    default=self.config_entry.options.get(OPTION_I2C_LOCKS_KEY, "i2c_locks")
+                ): str,
+                    
             }),
         )
 

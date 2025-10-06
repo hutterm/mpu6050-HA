@@ -25,7 +25,7 @@ import time
 import logging
 import random
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL
+from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL, OPTION_I2C_LOCKS_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -154,20 +154,27 @@ class MPU6050Device:
             self.target_interval = self.entry.options.get(OPTION_TARGET_INTERVAL, 1.0) # target interval in seconds
             self.roll_offset = self.entry.options.get(OPTION_ROLL_OFFSET, 0.0)
             self.pitch_offset = self.entry.options.get(OPTION_PITCH_OFFSET, 0.0)
+            i2c_locks_key = self.entry.options.get(OPTION_I2C_LOCKS_KEY, "i2c_locks")
+            if i2c_locks_key not in self.hass.data:
+                self.hass.data[i2c_locks_key] = {}
+            if self.bus not in self.hass.data[i2c_locks_key]:
+                self.hass.data[i2c_locks_key][self.bus] = asyncio.Lock()
+            alock = self.hass.data[i2c_locks_key][self.bus]
             
             p = self.pitch_offset * math.pi / 180.0
             r = self.roll_offset  * math.pi / 180.0
-            try:
-                mpu = MPU6050(self.bus, self.address, self.freq_divider)
-                await mpu.init_async(a_xGOff=57,a_yGOff=24,a_zGOff=149)
-                await asyncio.sleep(1) # wait for sensor to stabilize
+            async with alock:
+                try:
+                    mpu = MPU6050(self.bus, self.address, self.freq_divider)
+                    await mpu.init_async(a_xGOff=57,a_yGOff=24,a_zGOff=149)
+                    await asyncio.sleep(1) # wait for sensor to stabilize
 
-                backoff = 1
-            except Exception as e:
-                _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
-                continue
+                    backoff = 1
+                except Exception as e:
+                    _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+                    continue
             
             temp_timer = time.monotonic()
 
@@ -184,7 +191,8 @@ class MPU6050Device:
                         # add small random offset to the wait time to avoid always reading at the same time
                         # this helps to avoid interference with other I2C devices
                         await asyncio.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start)))
-                        accel = mpu.get_acceleration()
+                        async with alock:
+                            accel = mpu.get_acceleration()
                         Ax = accel.x * self.accel_range / (2**15)
                         Ay = accel.y * self.accel_range / (2**15)
                         Az = accel.z * self.accel_range / (2**15)
@@ -229,7 +237,8 @@ class MPU6050Device:
                     self.sensors[9].update_state(pitch)
                     self.sensors[10].update_state(roll)
                     if time.monotonic() - temp_timer >= self.temp_freq:
-                        self.sensors[11].update_state(mpu.get_temp())
+                        async with alock:
+                            self.sensors[11].update_state(mpu.get_temp())
                         temp_timer = time.monotonic()
 
                     await asyncio.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.monotonic() - start)))
