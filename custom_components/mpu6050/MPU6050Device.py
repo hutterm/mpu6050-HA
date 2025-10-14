@@ -158,7 +158,8 @@ class MPU6050Device:
             if i2c_locks_key not in self.hass.data:
                 self.hass.data[i2c_locks_key] = {}
             if self.bus not in self.hass.data[i2c_locks_key]:
-                self.hass.data[i2c_locks_key][self.bus] = asyncio.Lock()
+                self.hass.data[i2c_locks_key][self.bus] = asyncio.Lock()                
+                _LOGGER.warning("MPU6050 Created new lock for I2C bus %s", self.bus)
             alock = self.hass.data[i2c_locks_key][self.bus]
             
             p = self.pitch_offset * math.pi / 180.0
