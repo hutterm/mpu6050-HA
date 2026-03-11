@@ -82,10 +82,8 @@ class MPU6050:
         self.__bus = smbus2.SMBus(a_bus)
         self.__debug = a_debug
     
-    async def init_async(self, a_xAOff=None, a_yAOff=None, a_zAOff=None, a_xGOff=None,
+    def initialize(self, a_xAOff=None, a_yAOff=None, a_zAOff=None, a_xGOff=None,
                  a_yGOff=None, a_zGOff=None, ):
-
-        await asyncio.sleep(2)
         # Set clock source to gyro
         self.set_clock_source(C.MPU6050_CLOCK_PLL_XGYRO)
         # Set accelerometer range
@@ -107,6 +105,22 @@ class MPU6050:
             self.set_y_gyro_offset(a_yGOff)
         if a_zGOff:
             self.set_z_gyro_offset(a_zGOff)
+
+    async def init_async(self, a_xAOff=None, a_yAOff=None, a_zAOff=None, a_xGOff=None,
+                 a_yGOff=None, a_zGOff=None, ):
+
+        await asyncio.sleep(2)
+        self.initialize(
+            a_xAOff=a_xAOff,
+            a_yAOff=a_yAOff,
+            a_zAOff=a_zAOff,
+            a_xGOff=a_xGOff,
+            a_yGOff=a_yGOff,
+            a_zGOff=a_zGOff,
+        )
+
+    def close(self):
+        self.__bus.close()
 
     ###  ###
     def isreadyFIFO(self, packet_size):

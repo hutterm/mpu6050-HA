@@ -25,7 +25,8 @@ import time
 import logging
 import random
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL, OPTION_I2C_LOCKS_KEY
+from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL, OPTION_I2C_LOCKS_KEY, DEFAULT_I2C_LOCKS_KEY
+from .i2c_lock import get_i2c_bus_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,6 +130,20 @@ class MPU6050Device:
     def roll(self):
         return self._roll
 
+    def _get_bus_lock(self):
+        i2c_locks_key = self.entry.options.get(
+            OPTION_I2C_LOCKS_KEY,
+            DEFAULT_I2C_LOCKS_KEY,
+        )
+        lock, created = get_i2c_bus_lock(self.hass, i2c_locks_key, self.bus)
+        if created:
+            _LOGGER.warning("MPU6050 created new lock for I2C bus %s", self.bus)
+        return lock
+
+    async def _run_i2c_call(self, lock, func, *args):
+        async with lock:
+            return await self.hass.async_add_executor_job(func, *args)
+
     def start(self):
         if self._task is None or self._task.done():
             self._stop_event.clear()
@@ -154,96 +169,116 @@ class MPU6050Device:
             self.target_interval = self.entry.options.get(OPTION_TARGET_INTERVAL, 1.0) # target interval in seconds
             self.roll_offset = self.entry.options.get(OPTION_ROLL_OFFSET, 0.0)
             self.pitch_offset = self.entry.options.get(OPTION_PITCH_OFFSET, 0.0)
-            i2c_locks_key = self.entry.options.get(OPTION_I2C_LOCKS_KEY, "i2c_locks")
-            if i2c_locks_key not in self.hass.data:
-                self.hass.data[i2c_locks_key] = {}
-            if self.bus not in self.hass.data[i2c_locks_key]:
-                self.hass.data[i2c_locks_key][self.bus] = asyncio.Lock()                
-                _LOGGER.warning("MPU6050 Created new lock for I2C bus %s", self.bus)
-            alock = self.hass.data[i2c_locks_key][self.bus]
-            
+            alock = self._get_bus_lock()
+
             p = self.pitch_offset * math.pi / 180.0
             r = self.roll_offset  * math.pi / 180.0
-            async with alock:
-                try:
-                    mpu = MPU6050(self.bus, self.address, self.freq_divider)
-                    await mpu.init_async(a_xGOff=57,a_yGOff=24,a_zGOff=149)
-                    await asyncio.sleep(1) # wait for sensor to stabilize
+            mpu = None
+            try:
+                mpu = await self.hass.async_add_executor_job(
+                    MPU6050,
+                    self.bus,
+                    self.address,
+                    self.freq_divider,
+                )
+                await asyncio.sleep(2) # wait for sensor to power up
+                await self._run_i2c_call(
+                    alock,
+                    mpu.initialize,
+                    None,
+                    None,
+                    None,
+                    57,
+                    24,
+                    149,
+                )
+                await asyncio.sleep(1) # wait for sensor to stabilize
 
-                    backoff = 1
-                except Exception as e:
-                    _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, 60)
-                    continue
-            
+                backoff = 1
+            except Exception as e:
+                _LOGGER.error("Init error: %s, retry in %s s", e, backoff)
+                if mpu is not None:
+                    try:
+                        await self.hass.async_add_executor_job(mpu.close)
+                    except OSError as close_error:
+                        _LOGGER.warning("I2C close error during init retry: %s", close_error)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
+
             temp_timer = time.monotonic()
 
-            while not self._stop_event.is_set():
-                start = time.monotonic()
+            try:
+                while not self._stop_event.is_set():
+                    start = time.monotonic()
 
-                target_ct = int(self.target_interval / self.freq_s)
-                target_ct = max(1, target_ct)
+                    target_ct = int(self.target_interval / self.freq_s)
+                    target_ct = max(1, target_ct)
 
+                    try:
+                        ax_sum = ay_sum = az_sum = 0.0
+                        ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                        for i in range(0,target_ct):
+                            # add small random offset to the wait time to avoid always reading at the same time
+                            # this helps to avoid interference with other I2C devices
+                            await asyncio.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start)))
+                            accel = await self._run_i2c_call(alock, mpu.get_acceleration)
+                            Ax = accel.x * self.accel_range / (2**15)
+                            Ay = accel.y * self.accel_range / (2**15)
+                            Az = accel.z * self.accel_range / (2**15)
+
+                            # apply rotation corrections (Ry(-p) then Rx(-r))
+                            x1 = Ax * math.cos(p) - Az * math.sin(p)
+                            y1 = Ay
+                            z1 = Ax * math.sin(p) + Az * math.cos(p)
+
+                            # Then Rx(-r)
+                            x_corr = x1
+                            y_corr = y1 * math.cos(r) + z1 * math.sin(r)
+                            z_corr = -y1 * math.sin(r) + z1 * math.cos(r)
+
+                            ax_sum += x_corr
+                            ay_sum += y_corr
+                            az_sum += z_corr
+                            ax_max = max(ax_max, x_corr)
+                            ay_max = max(ay_max, y_corr)
+                            az_max = max(az_max, z_corr)
+                            ax_min = min(ax_min, x_corr)
+                            ay_min = min(ay_min, y_corr)
+                            az_min = min(az_min, z_corr)
+
+                        Ax = ax_sum / target_ct
+                        Ay = ay_sum / target_ct
+                        Az = az_sum / target_ct
+
+                        roll = -(math.atan2(Ay, Az) * 180.0 / math.pi)
+                        pitch = math.atan2(-Ax, math.sqrt(Ay**2 + Az**2)) * 180.0 / math.pi
+
+
+                        self.sensors[0].update_state(Ax)
+                        self.sensors[1].update_state(Ay)
+                        self.sensors[2].update_state(Az)
+                        self.sensors[3].update_state(ax_max)
+                        self.sensors[4].update_state(ay_max)
+                        self.sensors[5].update_state(az_max)
+                        self.sensors[6].update_state(ax_min)
+                        self.sensors[7].update_state(ay_min)
+                        self.sensors[8].update_state(az_min)
+                        self.sensors[9].update_state(pitch)
+                        self.sensors[10].update_state(roll)
+                        if time.monotonic() - temp_timer >= self.temp_freq:
+                            self.sensors[11].update_state(await self._run_i2c_call(alock, mpu.get_temp))
+                            temp_timer = time.monotonic()
+
+                        await asyncio.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.monotonic() - start)))
+                    except Exception as e:
+                        _LOGGER.exception("Read error: %s", e)
+                        break
+            finally:
                 try:
-                    ax_sum = ay_sum = az_sum = 0.0
-                    ax_max, ay_max, az_max, ax_min, ay_min, az_min = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                    for i in range(0,target_ct):
-                        # add small random offset to the wait time to avoid always reading at the same time
-                        # this helps to avoid interference with other I2C devices
-                        await asyncio.sleep(max(0, i*self.freq_s + random.uniform(0, 0.01) - (time.time() - start)))
-                        async with alock:
-                            accel = mpu.get_acceleration()
-                        Ax = accel.x * self.accel_range / (2**15)
-                        Ay = accel.y * self.accel_range / (2**15)
-                        Az = accel.z * self.accel_range / (2**15)
+                    await self.hass.async_add_executor_job(mpu.close)
+                except OSError as close_error:
+                    _LOGGER.warning("I2C close error: %s", close_error)
 
-                        # apply rotation corrections (Ry(-p) then Rx(-r))
-                        x1 = Ax * math.cos(p) - Az * math.sin(p)
-                        y1 = Ay
-                        z1 = Ax * math.sin(p) + Az * math.cos(p)
-
-                        # Then Rx(-r)
-                        x_corr = x1
-                        y_corr = y1 * math.cos(r) + z1 * math.sin(r)
-                        z_corr = -y1 * math.sin(r) + z1 * math.cos(r)
-
-                        ax_sum += x_corr
-                        ay_sum += y_corr
-                        az_sum += z_corr
-                        ax_max = max(ax_max, x_corr)
-                        ay_max = max(ay_max, y_corr)
-                        az_max = max(az_max, z_corr)
-                        ax_min = min(ax_min, x_corr)
-                        ay_min = min(ay_min, y_corr)
-                        az_min = min(az_min, z_corr)
-
-                    Ax = ax_sum / target_ct
-                    Ay = ay_sum / target_ct
-                    Az = az_sum / target_ct
-
-                    roll = -(math.atan2(Ay, Az) * 180.0 / math.pi)
-                    pitch = math.atan2(-Ax, math.sqrt(Ay**2 + Az**2)) * 180.0 / math.pi
-
-
-                    self.sensors[0].update_state(Ax)
-                    self.sensors[1].update_state(Ay)
-                    self.sensors[2].update_state(Az)
-                    self.sensors[3].update_state(ax_max)
-                    self.sensors[4].update_state(ay_max)
-                    self.sensors[5].update_state(az_max)
-                    self.sensors[6].update_state(ax_min)
-                    self.sensors[7].update_state(ay_min)
-                    self.sensors[8].update_state(az_min)
-                    self.sensors[9].update_state(pitch)
-                    self.sensors[10].update_state(roll)
-                    if time.monotonic() - temp_timer >= self.temp_freq:
-                        async with alock:
-                            self.sensors[11].update_state(mpu.get_temp())
-                        temp_timer = time.monotonic()
-
-                    await asyncio.sleep(max(0, self.target_interval + random.uniform(0, 0.01) - (time.monotonic() - start)))
-                except Exception as e:
-                    _LOGGER.exception("Read error: %s", e)
-                    break
-            await asyncio.sleep(5) # wait before re-initializing the sensor
+            if not self._stop_event.is_set():
+                await asyncio.sleep(5) # wait before re-initializing the sensor

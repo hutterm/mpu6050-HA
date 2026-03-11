@@ -19,8 +19,19 @@ from homeassistant.core import callback
 import os
 from smbus2 import SMBus
 
-from .const import CONF_BUS_ADDRESS, DOMAIN, CONF_BUS, CONF_ADDRESS, OPTION_ROLL_OFFSET, OPTION_PITCH_OFFSET, OPTION_TARGET_INTERVAL, OPTION_I2C_LOCKS_KEY
+from .const import (
+    CONF_BUS_ADDRESS,
+    DOMAIN,
+    CONF_BUS,
+    CONF_ADDRESS,
+    OPTION_ROLL_OFFSET,
+    OPTION_PITCH_OFFSET,
+    OPTION_TARGET_INTERVAL,
+    OPTION_I2C_LOCKS_KEY,
+    DEFAULT_I2C_LOCKS_KEY,
+)
 from .MPUConstants import MPUConstants
+from .i2c_lock import get_i2c_bus_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,7 +61,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10.0)),
                 vol.Required(
                     OPTION_I2C_LOCKS_KEY,
-                    default=self.config_entry.options.get(OPTION_I2C_LOCKS_KEY, "i2c_locks")
+                    default=self.config_entry.options.get(
+                        OPTION_I2C_LOCKS_KEY,
+                        DEFAULT_I2C_LOCKS_KEY,
+                    )
                 ): str,
                     
             }),
@@ -96,11 +110,24 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
         # Get all (bus, address) pairs for detected I2C devices
-        bus_addresses = [
-            (bus, addr)
-            for bus in busses
-            for addr in await self.hass.async_add_executor_job(list_i2c_devices, bus,[MPUConstants.MPU6050_ADDRESS_AD0_LOW, MPUConstants.MPU6050_ADDRESS_AD0_HIGH])
-        ]
+        bus_addresses: list[tuple[int, int]] = []
+        for bus in busses:
+            lock, created = get_i2c_bus_lock(self.hass, DEFAULT_I2C_LOCKS_KEY, bus)
+            if created:
+                _LOGGER.debug("Created config-flow I2C lock for bus %s", bus)
+
+            async with lock:
+                detected = await self.hass.async_add_executor_job(
+                    list_i2c_devices,
+                    bus,
+                    [
+                        MPUConstants.MPU6050_ADDRESS_AD0_LOW,
+                        MPUConstants.MPU6050_ADDRESS_AD0_HIGH,
+                    ],
+                )
+
+            for addr in detected:
+                bus_addresses.append((bus, addr))
 
         _LOGGER.debug("Detected I2C devices: %s", bus_addresses)
         
@@ -117,6 +144,8 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     options={
                         OPTION_ROLL_OFFSET: 0.0,
                         OPTION_PITCH_OFFSET: 0.0,
+                        OPTION_TARGET_INTERVAL: 1.0,
+                        OPTION_I2C_LOCKS_KEY: DEFAULT_I2C_LOCKS_KEY,
                     }
                 )
             except CannotConnect:
