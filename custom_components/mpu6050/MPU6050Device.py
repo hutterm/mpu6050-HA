@@ -114,8 +114,10 @@ class MPU6050Device:
         self.temp_freq = 10.0 # read temperature every 10 seconds
         self.accel_range = 2.0
         self.gyro_lsb_per_dps = 131.0  # FS=250dps in initialize()
-        self._complementary_tau_s = 0.75
+        self._complementary_tau_s = 0.25
         self._accel_trust_tolerance_g = 0.08
+        self._gyro_bias_x_dps = 0.0
+        self._gyro_bias_y_dps = 0.0
         self._filter_last_ts: float | None = None
         self._use_dmp = DEFAULT_USE_DMP
         self.sensors = [
@@ -247,6 +249,21 @@ class MPU6050Device:
         self._roll = self._blend_angle_deg(roll_gyro, roll_accel, accel_weight)
         self._pitch = self._blend_angle_deg(pitch_gyro, pitch_accel, accel_weight)
 
+    async def _estimate_gyro_bias(self, lock, mpu, cp, sp, cr, sr):
+        sample_count = 20
+        gx_sum = 0.0
+        gy_sum = 0.0
+        for _ in range(sample_count):
+            gyro = await self._run_i2c_call(lock, mpu.get_rotation)
+            gx = gyro.x / self.gyro_lsb_per_dps
+            gy = gyro.y / self.gyro_lsb_per_dps
+            gz = gyro.z / self.gyro_lsb_per_dps
+            gx, gy, _ = self._rotate_vector(gx, gy, gz, cp, sp, cr, sr)
+            gx_sum += gx
+            gy_sum += gy
+            await asyncio.sleep(self.raw_freq_s)
+        return gx_sum / sample_count, gy_sum / sample_count
+
     def _publish_sample(
         self,
         ax: float,
@@ -304,6 +321,8 @@ class MPU6050Device:
 
             ax, ay, az = self._rotate_vector(ax, ay, az, cp, sp, cr, sr)
             gx, gy, _ = self._rotate_vector(gx, gy, gz, cp, sp, cr, sr)
+            gx -= self._gyro_bias_x_dps
+            gy -= self._gyro_bias_y_dps
 
             roll_accel, pitch_accel = self._accel_to_angles(ax, ay, az)
             now = time.monotonic()
@@ -358,8 +377,6 @@ class MPU6050Device:
         sp: float,
         cr: float,
         sr: float,
-        roll_offset: float,
-        pitch_offset: float,
     ):
         int_status = await self._run_i2c_call(lock, mpu.get_int_status)
         fifo_count = await self._run_i2c_call(lock, mpu.get_FIFO_count)
@@ -385,12 +402,13 @@ class MPU6050Device:
 
             accel = mpu.DMP_get_acceleration_int16(fifo_buffer)
             quat = mpu.DMP_get_quaternion(fifo_buffer)
-            dmp_rpy = mpu.DMP_get_euler_roll_pitch_yaw(quat)
+            grav = mpu.DMP_get_gravity(quat)
 
             ax = accel.x * self.accel_range / (2**15)
             ay = accel.y * self.accel_range / (2**15)
             az = accel.z * self.accel_range / (2**15)
             ax, ay, az = self._rotate_vector(ax, ay, az, cp, sp, cr, sr)
+            gx, gy, gz = self._rotate_vector(grav.x, grav.y, grav.z, cp, sp, cr, sr)
 
             ax_sum += ax
             ay_sum += ay
@@ -403,8 +421,7 @@ class MPU6050Device:
             az_min = min(az_min, az)
             packet_count += 1
 
-            latest_roll = self._wrap_angle_deg(dmp_rpy.x - roll_offset)
-            latest_pitch = self._wrap_angle_deg(dmp_rpy.y - pitch_offset)
+            latest_roll, latest_pitch = self._accel_to_angles(gx, gy, gz)
 
         if packet_count == 0:
             return None
@@ -467,6 +484,8 @@ class MPU6050Device:
                 )
                 await asyncio.sleep(2) # wait for sensor to power up
                 if self._use_dmp:
+                    self._gyro_bias_x_dps = 0.0
+                    self._gyro_bias_y_dps = 0.0
                     await self._run_i2c_call(alock, mpu.dmp_initialize)
                     await self._run_i2c_call(alock, mpu.set_DMP_enabled, True)
                     packet_size = await self._run_i2c_call(
@@ -498,10 +517,15 @@ class MPU6050Device:
                     az = seed_accel.z * self.accel_range / (2**15)
                     ax, ay, az = self._rotate_vector(ax, ay, az, cp, sp, cr, sr)
                     self._roll, self._pitch = self._accel_to_angles(ax, ay, az)
-                    self._filter_last_ts = time.monotonic()
+                    self._gyro_bias_x_dps, self._gyro_bias_y_dps = (
+                        await self._estimate_gyro_bias(alock, mpu, cp, sp, cr, sr)
+                    )
+                    self._filter_last_ts = None
                     _LOGGER.info(
-                        "MPU6050 running in complementary mode (%.2f Hz internal)",
+                        "MPU6050 running in complementary mode (%.2f Hz internal, gyro bias x=%.4f y=%.4f dps)",
                         1000.0 / (self.freq_divider + 1),
+                        self._gyro_bias_x_dps,
+                        self._gyro_bias_y_dps,
                     )
                 await asyncio.sleep(1) # wait for sensor to stabilize
 
@@ -547,8 +571,6 @@ class MPU6050Device:
                                 sp,
                                 cr,
                                 sr,
-                                self.roll_offset,
-                                self.pitch_offset,
                             )
                         else:
                             sample = await self._read_complementary_window(
