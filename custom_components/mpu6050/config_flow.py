@@ -27,6 +27,8 @@ from .const import (
     OPTION_ROLL_OFFSET,
     OPTION_PITCH_OFFSET,
     OPTION_TARGET_INTERVAL,
+    OPTION_USE_DMP,
+    DEFAULT_USE_DMP,
     OPTION_I2C_LOCKS_KEY,
     DEFAULT_I2C_LOCKS_KEY,
 )
@@ -59,6 +61,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     OPTION_TARGET_INTERVAL,
                     default=self.config_entry.options.get(OPTION_TARGET_INTERVAL, 1.0)
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10.0)),
+                vol.Required(
+                    OPTION_USE_DMP,
+                    default=self.config_entry.options.get(
+                        OPTION_USE_DMP,
+                        DEFAULT_USE_DMP,
+                    )
+                ): bool,
                 vol.Required(
                     OPTION_I2C_LOCKS_KEY,
                     default=self.config_entry.options.get(
@@ -145,6 +154,7 @@ class MPU6050ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         OPTION_ROLL_OFFSET: 0.0,
                         OPTION_PITCH_OFFSET: 0.0,
                         OPTION_TARGET_INTERVAL: 1.0,
+                        OPTION_USE_DMP: DEFAULT_USE_DMP,
                         OPTION_I2C_LOCKS_KEY: DEFAULT_I2C_LOCKS_KEY,
                     }
                 )
